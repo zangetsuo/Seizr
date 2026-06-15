@@ -1,136 +1,85 @@
-# Kairos
+<div align="center">
 
-> *Kairos* (καιρός) — the Greek god of the opportune moment. A Minecraft Java
-> Edition username sniper that seizes a name the instant it drops.
+# Seizr
 
-Kairos authenticates **your own** Microsoft/Minecraft account, watches a target
-username, and fires a burst of concurrent claim requests at the exact moment it
-becomes available. Use it from the command line or through a modern web UI.
+### Seize the moment a name drops.
 
----
+**Seizr watches the Minecraft username you want and claims it the instant it
+opens — synced to real time, so you don't have to sit and watch the clock.**
 
-## Features
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Trust & safety](#trust--safety) · [Deploy](#deploy-your-own) · [Docs](docs/TECHNICAL.md)
 
-- **Full Microsoft auth chain** — device-code OAuth2 (browser login, no password)
-  → Xbox Live → XSTS → Minecraft bearer token.
-- **Token caching** — refresh token saved to disk, so re-runs skip the login.
-- **Auto-refresh** — the bearer token is refreshed before expiry during long waits.
-- **NTP clock sync** — corrects for system clock drift so timing lines up with the
-  real drop, not your machine's skewed clock.
-- **Cooldown guard** — verifies the account has no active name-change cooldown
-  before sniping.
-- **Tuned sniping** — polls availability every 500 ms from T-3 min, then fires N
-  concurrent `PUT` claims at T-2 s, stopping on the first HTTP 200.
-- **Graceful 429 handling** — logs rate limits and keeps going.
-- **Web UI** — Kairos-themed dashboard with a live countdown and streamed log
-  (Server-Sent Events).
+</div>
 
 ---
 
-## Project structure
+> Named for *Kairos* (καιρός), the Greek god of the fleeting, opportune moment —
+> he wears a long forelock you grab as he rushes past; hesitate and he's gone.
+> **Seizr** is that grab.
 
-| File | Role |
-|------|------|
-| `auth.py` | Microsoft → Xbox → XSTS → Minecraft auth chain + token cache |
-| `api.py` | Availability polling and the concurrent claim burst |
-| `sniper.py` | CLI entry point: NTP sync, drop-time resolution, orchestration |
-| `webapp.py` | FastAPI server (REST + SSE) serving the web UI |
-| `static/index.html` | Web frontend (self-contained, no build step) |
-| `config.json` | User-editable settings (used by the CLI) |
-| `Dockerfile`, `DEPLOY.md` | Container + free-tier cloud deployment |
+## Why Seizr
 
----
+- ⏱️ **Perfect timing** — your clock is synced to an NTP server, so Seizr fires
+  on the *real* drop time, not your machine's drift.
+- 🎯 **Wins the race** — at the drop it sends a burst of simultaneous claims and
+  stops the instant one lands the name.
+- 🛟 **Safe by default** — sensible request rates and automatic back-off keep your
+  account clear of rate-limit trouble.
+- 🔒 **Your account, your control** — sign in once with Microsoft, no password ever
+  stored. Seizr only ever acts on your own profile.
+- 🪶 **Set it and walk away** — give it the name and its window; it watches the
+  whole window and seizes the moment for you.
 
-## Install
+## How it works
+
+1. **Connect** your Microsoft account — once, in your own browser. No password stored.
+2. **Paste** the name and its drop window (read off [NameMC](https://namemc.com)).
+3. **Seizr watches** the window and claims the name the instant it opens.
+
+## Quick start
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-```
-
----
-
-## Usage
-
-### Web UI (recommended)
-
-```bash
 .venv/bin/python -m uvicorn webapp:app --port 8000
 ```
 
-Open <http://localhost:8000>:
+Open **http://localhost:8000**, connect your account, enter the name + window, and
+let Seizr watch. Prefer the terminal? There's a CLI too — see the
+[technical docs](docs/TECHNICAL.md).
 
-1. **Connect Microsoft account** — sign in once (device code). The token is cached.
-2. **Target** — enter the username and drop time (ISO 8601, UTC). Use **Check on
-   NameMC** if you're unsure of the exact name.
-3. **Run sniper** — watch the live countdown and log; a green pill confirms the claim.
+## Trust & safety
 
-Add `--reload` while editing the frontend.
+Seizr handles your Microsoft account, so it is **fully open source** — read every
+line that touches your credentials before you run it.
 
-### CLI
+- **Your password is never seen or stored.** Login uses Microsoft's OAuth2
+  device-code flow — you authenticate on `microsoft.com` yourself.
+- **Only a refresh token is kept**, owner-only on disk or on a volume you control.
+  No password, email, or payment data.
+- **Two hosts only** — Microsoft login and the Minecraft API. No telemetry, no
+  third parties.
 
-Edit `config.json`, then:
+Details and how to report an issue: [`SECURITY.md`](SECURITY.md).
 
-```bash
-.venv/bin/python sniper.py
-```
+## Deploy your own
 
-Test auth in isolation:
+Runs on a free always-on VM. See [`DEPLOY.md`](DEPLOY.md) — Oracle Cloud Always
+Free (recommended), GCP, Cloud Run, or `systemd`. Host in **US East / Ashburn**
+for the lowest latency to Mojang's API.
 
-```bash
-.venv/bin/python auth.py
-```
+> ⚠️ The web UI drives your account and has no built-in auth — don't expose it to
+> the public internet. Bind to localhost and reach it over an SSH tunnel.
 
----
+## Documentation
 
-## Configuration (`config.json`)
+Architecture, configuration reference, CLI usage, and limitations live in
+**[docs/TECHNICAL.md](docs/TECHNICAL.md)**.
 
-```json
-{
-  "target_name": "",
-  "drop_time": "",
-  "burst_start_seconds": 2,
-  "concurrent_requests": 20,
-  "poll_interval_ms": 500,
-  "client_id": "",
-  "ntp_server": "pool.ntp.org"
-}
-```
+## License
 
-- `target_name` — username to claim (required).
-- `drop_time` — ISO 8601, assumed UTC if no timezone given. **Required** (see below).
-- `burst_start_seconds` — fire the claim burst this many seconds before the drop.
-- `concurrent_requests` — number of simultaneous claim requests.
-- `poll_interval_ms` — availability poll cadence.
-- `client_id` — leave blank to use the bundled public MSA app, or set your own
-  Azure app id (with device-code flow and the `XboxLive.signin` scope).
-- `ntp_server` — NTP server used for clock sync.
+**GNU Affero General Public License v3.0** ([`LICENSE`](LICENSE)). Use, study,
+self-host, and fork freely — but anyone who runs a modified version as a service
+must publish their changes. Every deployment of Seizr stays open.
 
----
-
-## Deployment
-
-See [`DEPLOY.md`](DEPLOY.md) — Oracle Cloud Always Free (recommended), GCP
-e2-micro, Cloud Run, or a `systemd` service.
-
----
-
-## Notes & limitations
-
-- **Drop time must be set manually.** Auto-detect (last name change + 37 days)
-  is implemented but non-functional: Mojang removed the public name-history API
-  in 2022, and fallback sources no longer return change dates. Set `drop_time`
-  yourself.
-- **Run against your own account only.** Kairos uses your authenticated session
-  to claim names on your profile.
-- **Don't expose the web UI publicly.** It drives your account with no built-in
-  auth. On a cloud VM, bind to `127.0.0.1` and reach it over an SSH tunnel
-  (details in `DEPLOY.md`).
-- Name sniping may conflict with Mojang/Microsoft terms of service. Use at your
-  own risk.
-
----
-
-## Requirements
-
-Python 3.10+ · `aiohttp` · `ntplib` · `fastapi` · `uvicorn`
+"Seizr" and its logo are project marks — forks must use a different name.

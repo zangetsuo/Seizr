@@ -2,3 +2,6 @@ aiohttp
 ntplib
 fastapi
 uvicorn[standard]
+argon2-cffi
+aiosqlite
+cryptography

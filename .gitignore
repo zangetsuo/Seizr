@@ -2,3 +2,8 @@
 __pycache__/
 *.pyc
 .auth_cache.json
+seizr.db
+seizr.db-wal
+seizr.db-shm
+.env
+TODO.md

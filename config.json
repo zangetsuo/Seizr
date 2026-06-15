@@ -1,9 +1,9 @@
 {
   "target_name": "",
-  "drop_time": "",
-  "burst_start_seconds": 2,
-  "concurrent_requests": 20,
-  "poll_interval_ms": 500,
+  "window_start": "",
+  "window_end": "",
+  "concurrent_requests": 5,
+  "poll_interval_ms": 1000,
   "client_id": "",
   "ntp_server": "pool.ntp.org"
 }

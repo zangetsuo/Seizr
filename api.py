@@ -27,7 +27,7 @@ class NameSniper:
         auth: MinecraftAuth,
         target_name: str,
         now_fn: Callable[[], float],
-        concurrent_requests: int = 20,
+        concurrent_requests: int = 5,
         log_fn: Optional[LogFn] = None,
     ):
         self.session = session
@@ -70,33 +70,24 @@ class NameSniper:
 
     # ----- availability ----------------------------------------------------
 
-    async def is_available(self) -> Optional[bool]:
-        """True/False, or None on transient error (so the caller keeps polling)."""
+    async def is_available(self) -> str:
+        """Return one of: AVAILABLE, TAKEN, RATELIMIT, ERROR.
+
+        RATELIMIT is distinct so the poll loop can back off instead of hammering.
+        """
         url = AVAILABLE_URL.format(name=self.target)
         try:
             async with self.session.get(url, headers=await self._headers()) as resp:
                 if resp.status == 429:
-                    self._log("availability: 429 rate limited — backing off")
-                    return None
+                    return "RATELIMIT"
                 if resp.status != 200:
                     self._log(f"availability: HTTP {resp.status}")
-                    return None
+                    return "ERROR"
                 data = await resp.json()
         except aiohttp.ClientError as exc:
             self._log(f"availability: network error {exc}")
-            return None
-        return data.get("status") == "AVAILABLE"
-
-    async def poll_until_available(self, interval_ms: int, deadline: float) -> None:
-        """Poll availability until AVAILABLE or until deadline (epoch seconds)."""
-        interval = interval_ms / 1000
-        while self.now() < deadline:
-            status = await self.is_available()
-            if status is True:
-                self._log(f"'{self.target}' is AVAILABLE")
-                return
-            await asyncio.sleep(interval)
-        self._log("reached drop time — proceeding to burst")
+            return "ERROR"
+        return "AVAILABLE" if data.get("status") == "AVAILABLE" else "TAKEN"
 
     # ----- claim burst -----------------------------------------------------
 
@@ -135,13 +126,54 @@ class NameSniper:
         await asyncio.gather(*tasks, return_exceptions=True)
         return won
 
-    async def claim_burst(self, give_up_at: float) -> bool:
-        """Repeat bursts from now until a 200 or until give_up_at."""
-        self._log(f"BURST start — {self.concurrent} concurrent PUTs per round")
-        while not self._stop.is_set() and self.now() < give_up_at:
-            if await self._burst():
-                self.claimed = True
-                return True
+    # ----- window snipe ----------------------------------------------------
+
+    # On an AVAILABLE flip, fire this many back-to-back burst rounds before
+    # falling back to polling (covers losing the first race / brief 429s).
+    AGGRESSIVE_ROUNDS = 6
+    # Adaptive poll backoff: double the interval on each 429, cap here, reset on
+    # any clean response. Keeps us under the limit so we stay responsive — and
+    # avoids the 429 flood that can temp-suspend the account.
+    MAX_BACKOFF_S = 10.0
+
+    async def snipe_window(self, window_start: float, window_end: float, poll_interval_ms: int) -> bool:
+        """Poll the whole drop window; burst-claim on the first AVAILABLE flip.
+
+        Names no longer drop at an exact instant — they free up somewhere inside
+        a window. So we poll continuously from window_start to window_end and, the
+        moment availability flips, hammer claims until we win or the name is taken.
+        Polling backs off on HTTP 429 and recovers once the limit clears.
+        """
+        base = poll_interval_ms / 1000
+        interval = base
+
+        while self.now() < window_start:
+            await asyncio.sleep(min(base, max(0.0, window_start - self.now())))
+
+        self._log(f"window open — polling '{self.target}' every {poll_interval_ms}ms "
+                  f"until window close")
+
+        while not self._stop.is_set() and self.now() < window_end:
+            status = await self.is_available()
+
+            if status == "AVAILABLE":
+                self._log(f"'{self.target}' AVAILABLE — firing bursts")
+                for _ in range(self.AGGRESSIVE_ROUNDS):
+                    if await self._burst():
+                        self.claimed = True
+                        return True
+                    if self.now() >= window_end:
+                        break
+                # not won this flip (someone may hold it briefly) — resume polling
+                interval = base
+            elif status == "RATELIMIT":
+                interval = min(interval * 2, self.MAX_BACKOFF_S)
+                self._log(f"availability: 429 rate limited — backing off to {interval:.1f}s")
+            else:  # TAKEN / ERROR — limit (if any) has cleared
+                interval = base
+
+            await asyncio.sleep(interval)
+
         if not self.claimed:
-            self._log("gave up — name not claimed in window")
+            self._log("window closed — name not claimed")
         return self.claimed

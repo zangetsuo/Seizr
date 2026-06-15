@@ -51,20 +51,30 @@ class MinecraftAuth:
         session: aiohttp.ClientSession,
         client_id: str = DEFAULT_CLIENT_ID,
         cache_file: Path = CACHE_FILE,
+        refresh_token: Optional[str] = None,
+        on_refresh=None,
     ):
+        """`on_refresh(token)` (async) makes this a per-user instance: the token
+        is injected and saved via the callback instead of the local file cache
+        (used by the multi-user web server). Without it, the file cache is used
+        (CLI / single-user)."""
         self.session = session
         self.client_id = client_id
         self.cache_file = cache_file
+        self._on_refresh = on_refresh
+        self._use_file = on_refresh is None
 
-        self.refresh_token: Optional[str] = None
+        self.refresh_token: Optional[str] = refresh_token
         self.bearer_token: Optional[str] = None
         self.bearer_expires_at: float = 0.0  # epoch seconds
 
         self._lock = asyncio.Lock()
 
-    # ----- cache -----------------------------------------------------------
+    # ----- token persistence -----------------------------------------------
 
     def _load_cache(self) -> None:
+        if not self._use_file:
+            return
         if self.cache_file.exists():
             try:
                 data = json.loads(self.cache_file.read_text())
@@ -72,12 +82,15 @@ class MinecraftAuth:
             except (json.JSONDecodeError, OSError):
                 self.refresh_token = None
 
-    def _save_cache(self) -> None:
-        try:
-            self.cache_file.write_text(json.dumps({"refresh_token": self.refresh_token}))
-            self.cache_file.chmod(0o600)
-        except OSError:
-            pass
+    async def _persist(self) -> None:
+        if self._use_file:
+            try:
+                self.cache_file.write_text(json.dumps({"refresh_token": self.refresh_token}))
+                self.cache_file.chmod(0o600)
+            except OSError:
+                pass
+        elif self._on_refresh and self.refresh_token:
+            await self._on_refresh(self.refresh_token)
 
     # ----- Microsoft OAuth2 ------------------------------------------------
 
@@ -216,7 +229,7 @@ class MinecraftAuth:
     async def finish_oauth(self, oauth: dict) -> None:
         """Given an MS OAuth token response, run Xbox -> XSTS -> Minecraft."""
         self.refresh_token = oauth["refresh_token"]
-        self._save_cache()
+        await self._persist()
 
         xbl_token, uhs = await self._xbl_auth(oauth["access_token"])
         xsts_token = await self._xsts_auth(xbl_token)

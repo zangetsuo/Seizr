@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Create account — Seizr</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tinos:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="landing">
+
+<nav class="nav">
+  <div class="nav-in">
+    <a class="wordmark" href="/">Seizr</a>
+    <span class="spacer"></span>
+    <a class="btn btn-tinted btn-sm" href="/login">Log in</a>
+  </div>
+</nav>
+
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>Create your account</h1>
+    <p class="sub">Seize the moment a name drops.</p>
+
+    <div class="auth-msg" id="msg"></div>
+
+    <form id="form">
+      <div class="auth-field">
+        <label>Email</label>
+        <input id="email" type="email" autocomplete="email" required>
+      </div>
+      <div class="auth-field">
+        <label>Password — at least 8 characters</label>
+        <input id="password" type="password" autocomplete="new-password" minlength="8" required>
+      </div>
+      <button class="btn btn-primary btn-full" type="submit" id="submit">Create account</button>
+    </form>
+
+    <div class="auth-sep">or</div>
+    <button class="auth-google" id="google" type="button">Continue with Google</button>
+
+    <div class="auth-alt">Already have an account? <a href="/login">Log in</a></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+function msg(t, cls){ const m = $("msg"); m.textContent = t; m.className = "auth-msg show " + cls; }
+
+$("form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const body = { email: $("email").value.trim(), password: $("password").value };
+  $("submit").disabled = true;
+  let r;
+  try { r = await fetch("/auth/register", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}); }
+  catch { msg("Server unreachable.", "err"); $("submit").disabled = false; return; }
+  const d = await r.json().catch(() => ({}));
+  if (r.ok) {
+    msg(d.message || "Check your email to verify your account.", "ok");
+    $("form").reset();
+  } else {
+    msg(d.error || "Could not create account.", "err");
+    $("submit").disabled = false;
+  }
+});
+
+$("google").onclick = () => { location.href = "/auth/google"; };
+</script>
+</body>
+</html>

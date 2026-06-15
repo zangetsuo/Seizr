@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seizr</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tinos:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-in">
+    <a class="wordmark" href="/">
+      <span class="mk">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#1C1C1E" stroke-width="2.3" stroke-linecap="round">
+          <path d="M5 8c4-3.2 9-3.2 13 0"/><path d="M4 13c5-3.6 11-3.6 16 0"/><path d="M6.5 18c3.2-2.5 7.8-2.5 11 0"/>
+        </svg>
+      </span>
+      Seizr
+    </a>
+    <span class="spacer"></span>
+    <span class="sse" id="sse"><span class="dot"></span>Live</span>
+    <span class="sse" id="acct" style="margin-left:16px"></span>
+    <button class="btn btn-tinted btn-sm" id="logout" style="margin-left:12px">Log out</button>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <div class="apptitle">Claim a name</div>
+  <div class="appsub">Tell Seizr the name and its window — it watches and seizes the moment for you.</div>
+
+  <!-- Account -->
+  <div class="group">
+    <div class="ghead">Sign in</div>
+    <div class="card">
+      <div class="row">
+        <span class="label">Microsoft</span>
+        <span class="right" id="loginPill"><span class="pill idle"><span class="dot"></span>Not connected</span></span>
+      </div>
+      <div class="codebox" id="codebox">
+        <div class="lbl">Seizr is opening a secure Microsoft sign-in. Visit the link and enter your code:</div>
+        <div class="code" id="code"></div>
+        <button class="btn-tinted copy" id="copyCode">Copy code</button>
+        <div class="loader" style="margin:16px auto 8px"></div>
+        <div class="lbl">Seizr is waiting for you to finish in the browser…</div>
+      </div>
+      <div class="actions">
+        <button class="btn-primary btn-full" id="loginBtn">Connect your account</button>
+      </div>
+    </div>
+    <div class="note">Sign in once so Seizr can claim the name on your behalf. No password ever leaves Microsoft.</div>
+  </div>
+
+  <!-- Target -->
+  <div class="group">
+    <div class="ghead">Target</div>
+    <div class="card">
+      <div class="field">
+        <label>Username</label>
+        <input id="target" placeholder="DreamWasTaken" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="two">
+        <div class="field">
+          <label>Window opens — your local time</label>
+          <input id="winStart" type="datetime-local" step="1">
+          <div class="resolved" id="winStartUtc"></div>
+        </div>
+        <div class="field">
+          <label>Window closes — your local time</label>
+          <input id="winEnd" type="datetime-local" step="1">
+          <div class="resolved" id="winEndUtc"></div>
+        </div>
+      </div>
+      <div class="two">
+        <div class="field"><label>Concurrent</label><input id="concurrent" value="5"></div>
+        <div class="field"><label>Poll (ms)</label><input id="poll" value="1000"></div>
+      </div>
+      <div class="actions">
+        <button class="btn-tinted btn-full" id="nameMcBtn">Look up on NameMC ↗</button>
+      </div>
+    </div>
+    <div class="note">Find the name's drop window on NameMC, then paste the times above.</div>
+  </div>
+
+  <!-- Run -->
+  <div class="group">
+    <div class="ghead">Watch</div>
+    <div class="card">
+      <div class="count-wrap">
+        <div class="count-label" id="countLabel">Window opens in</div>
+        <div class="count idle" id="count">--:--:--</div>
+        <div class="loader" id="runLoader" style="display:none; margin:14px auto 2px"></div>
+      </div>
+      <div class="actions">
+        <button class="btn-primary btn-full" id="startBtn" disabled>Seize the name</button>
+      </div>
+      <div style="padding:0 20px"><span id="resultPill"></span></div>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+
+  <div class="foot">Runs against your own Minecraft account · <a href="https://namemc.com" target="_blank" rel="noopener">NameMC</a></div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const logEl = $("log");
+function addLog(t){ logEl.textContent += t + "\n"; logEl.scrollTop = logEl.scrollHeight; }
+function pill(cls, txt){ return `<span class="pill ${cls}"><span class="dot"></span>${txt}</span>`; }
+
+function toast(msg, type){
+  const t = document.createElement("div");
+  t.className = "toast" + (type ? " " + type : "");
+  t.textContent = msg;
+  $("toasts").appendChild(t);
+  requestAnimationFrame(() => t.classList.add("show"));
+  setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 3200);
+}
+
+// local datetime-local value -> UTC ISO string ("...Z"), or "" if empty/invalid
+function toUtcIso(localVal){
+  if (!localVal) return "";
+  const d = new Date(localVal);
+  return isNaN(d.getTime()) ? "" : d.toISOString();
+}
+function shortUtc(iso){ return iso ? "→ " + iso.slice(0, 19) + "Z UTC" : ""; }
+
+document.querySelectorAll(".field input").forEach(i => {
+  i.addEventListener("focus", () => i.closest(".field").classList.add("focus"));
+  i.addEventListener("blur",  () => i.closest(".field").classList.remove("focus"));
+});
+
+// live "resolved UTC" hint under each window picker
+[["winStart","winStartUtc"],["winEnd","winEndUtc"]].forEach(([inp,out]) => {
+  $(inp).addEventListener("input", () => { $(out).textContent = shortUtc(toUtcIso($(inp).value)); });
+});
+
+async function refreshStatus(){
+  let s;
+  try { s = await (await fetch("/api/status")).json(); } catch { return; }
+  const L = s.login || {};
+  if (L.status === "done"){
+    $("loginPill").innerHTML = pill("ok", "Connected · " + (L.profile || "no profile"));
+    $("codebox").classList.remove("show");
+    $("loginBtn").closest(".actions").style.display = "none";
+    $("startBtn").disabled = s.running;
+  } else if (L.status === "pending"){
+    $("loginPill").innerHTML = pill("wait", "Waiting for sign-in");
+    $("codebox").classList.add("show");
+    $("verifyLink").textContent = L.verification_uri;
+    $("verifyLink").href = L.verification_uri;
+    $("code").textContent = L.user_code;
+    setTimeout(refreshStatus, 2500);
+  } else if (L.status === "error"){
+    $("loginPill").innerHTML = pill("bad", "Login failed");
+    addLog("login error: " + L.error);
+    $("loginBtn").disabled = false;
+  }
+}
+
+$("loginBtn").onclick = async () => {
+  $("loginBtn").disabled = true;
+  $("loginPill").innerHTML = '<span class="pill wait"><span class="loader loader-sm"></span>Connecting…</span>';
+  try { await fetch("/api/login", {method:"POST"}); } catch {}
+  refreshStatus();
+};
+
+$("copyCode").onclick = () => {
+  navigator.clipboard?.writeText($("code").textContent.trim());
+  $("copyCode").textContent = "Copied";
+  setTimeout(() => $("copyCode").textContent = "Copy code", 1200);
+};
+
+$("nameMcBtn").onclick = () => {
+  const n = $("target").value.trim();
+  window.open("https://namemc.com/search?q=" + encodeURIComponent(n), "_blank");
+};
+
+$("startBtn").onclick = async () => {
+  const body = {
+    target: $("target").value.trim(),
+    window_start: toUtcIso($("winStart").value),
+    window_end: toUtcIso($("winEnd").value),
+    concurrent: $("concurrent").value,
+    poll_ms: $("poll").value,
+  };
+  if (!body.target || !body.window_start){ toast("Enter a name and a window opening time.", "err"); return; }
+  if (body.window_end && body.window_end <= body.window_start){ toast("Window must close after it opens.", "err"); return; }
+  $("resultPill").innerHTML = ""; logEl.textContent = "";
+  let r;
+  try { r = await fetch("/api/start", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}); }
+  catch { toast("Server unreachable.", "err"); return; }
+  if (!r.ok){ toast((await r.json()).error, "err"); return; }
+  toast("Seizr is on watch.", "ok");
+  $("startBtn").disabled = true;
+  $("count").style.display = "none";
+  $("runLoader").style.display = "block";
+};
+
+const es = new EventSource("/api/events");
+es.onopen = () => $("sse").classList.add("live");
+es.onerror = () => $("sse").classList.remove("live");
+es.onmessage = (e) => {
+  const ev = JSON.parse(e.data);
+  if (ev.type === "log") addLog(ev.msg);
+  else if (ev.type === "countdown"){
+    $("runLoader").style.display = "none";
+    $("count").style.display = "";
+    $("count").classList.remove("idle");
+    $("count").textContent = ev.label;
+    $("countLabel").textContent = ev.phase === "closes" ? "Window closes in" : "Window opens in";
+  } else if (ev.type === "done"){
+    $("runLoader").style.display = "none";
+    $("count").style.display = "";
+    $("count").classList.add("idle");
+    $("count").textContent = "--:--:--";
+    $("startBtn").disabled = false;
+    if (ev.claimed){
+      $("resultPill").innerHTML = pill("ok", "Claimed · " + ev.name);
+      toast("Seized! The name is yours: " + ev.name, "ok");
+    } else {
+      $("resultPill").innerHTML = pill("bad", "Not claimed" + (ev.error ? " · " + ev.error : ""));
+      toast("Not claimed" + (ev.error ? " · " + ev.error : ""), "err");
+    }
+  }
+};
+
+// account chip + logout
+(async () => {
+  try {
+    const me = await (await fetch("/api/me")).json();
+    if (me.authenticated) $("acct").textContent = me.email;
+  } catch {}
+})();
+$("logout").onclick = async () => {
+  try { await fetch("/auth/logout", {method:"POST"}); } catch {}
+  location.href = "/login";
+};
+
+refreshStatus();
+</script>
+</body>
+</html>

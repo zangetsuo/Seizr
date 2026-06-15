@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in — Seizr</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tinos:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="landing">
+
+<nav class="nav">
+  <div class="nav-in">
+    <a class="wordmark" href="/">Seizr</a>
+    <span class="spacer"></span>
+    <a class="btn btn-tinted btn-sm" href="/register">Create account</a>
+  </div>
+</nav>
+
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>Welcome back</h1>
+    <p class="sub">Log in to seize names.</p>
+
+    <div class="auth-msg" id="msg"></div>
+
+    <form id="form">
+      <div class="auth-field">
+        <label>Email</label>
+        <input id="email" type="email" autocomplete="email" required>
+      </div>
+      <div class="auth-field">
+        <label>Password</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn-primary btn-full" type="submit">Log in</button>
+    </form>
+
+    <div class="auth-sep">or</div>
+    <button class="auth-google" id="google" type="button">Continue with Google</button>
+
+    <div class="auth-alt">No account? <a href="/register">Create one</a></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+function msg(t, cls){ const m = $("msg"); m.textContent = t; m.className = "auth-msg show " + cls; }
+
+const ERRORS = {
+  verify: "That verification link is invalid or expired. Try logging in to resend.",
+  google: "Google sign-in failed. Try again.",
+  google_off: "Google sign-in isn't configured on this server.",
+};
+const e = new URLSearchParams(location.search).get("error");
+if (e && ERRORS[e]) msg(ERRORS[e], "err");
+
+$("form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const body = { email: $("email").value.trim(), password: $("password").value };
+  let r;
+  try { r = await fetch("/auth/login", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}); }
+  catch { msg("Server unreachable.", "err"); return; }
+  if (r.ok) { location.href = "/app"; return; }
+  const d = await r.json().catch(() => ({}));
+  msg(d.error || "Login failed.", "err");
+});
+
+$("google").onclick = () => { location.href = "/auth/google"; };
+</script>
+</body>
+</html>
