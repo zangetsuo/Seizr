@@ -1,0 +1,4 @@
+aiohttp
+ntplib
+fastapi
+uvicorn[standard]
