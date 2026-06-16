@@ -5,7 +5,7 @@
 ### Seize the moment a name drops.
 
 **Seizr watches the Minecraft username you want and claims it the instant it
-opens — synced to real time, so you don't have to sit and watch the clock.**
+opens. Synced to real time, so you don't have to sit and watch the clock.**
 
 [Quick start](#quick-start) · [How it works](#how-it-works) · [Trust & safety](#trust--safety) · [Deploy](#deploy-your-own) · [Docs](docs/TECHNICAL.md)
 
