@@ -81,6 +81,8 @@ button:active,.btn:active{transform:scale(.98)}
 .btn-tinted:hover{background:rgba(232,184,75,.26); text-decoration:none}
 .btn-dark{background:var(--ink); color:#fff}
 .btn-dark:hover{filter:brightness(1.15); text-decoration:none}
+.btn-stop{background:var(--red); color:#fff}
+.btn-stop:hover{filter:brightness(1.08); text-decoration:none}
 .btn-sm{font-size:15px; padding:9px 18px}
 button:disabled{opacity:.4; cursor:not-allowed}
 .btn-full{width:100%}

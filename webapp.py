@@ -34,6 +34,7 @@ from accounts import AccountError
 from api import NameSniper
 from auth import AuthError, MinecraftAuth
 from db import Database
+from namemc import DropLookupError, fetch_drop_window
 from mailer import send_verification
 from sniper import (
     DEFAULT_WINDOW_MINUTES,
@@ -75,6 +76,7 @@ class UserRuntime:
         self.auth = auth
         self.login = {"status": "idle"}  # idle|pending|done|error
         self.running = False
+        self.task: asyncio.Task | None = None  # the in-flight snipe, for cancel
         self.bus = LogBus()
 
 
@@ -359,10 +361,15 @@ async def _run_snipe(app: FastAPI, rt: "UserRuntime", user_id: int, params: dict
             bus.publish({"type": "done", "claimed": True, "name": name})
         else:
             bus.publish({"type": "done", "claimed": False})
+    except asyncio.CancelledError:  # user hit Stop
+        log("Stopped by user.")
+        bus.publish({"type": "done", "claimed": False, "stopped": True})
+        raise
     except Exception as exc:  # surface any failure to the UI
         bus.publish({"type": "done", "claimed": False, "error": str(exc)})
     finally:
         rt.running = False
+        rt.task = None
 
 
 @app.post("/api/start")
@@ -381,8 +388,32 @@ async def start(request: Request):
     if not params.get("target") or not params.get("window_start"):
         return JSONResponse({"error": "target and window_start required"}, status_code=400)
 
-    asyncio.create_task(_run_snipe(app, rt, user["id"], params))
+    rt.task = asyncio.create_task(_run_snipe(app, rt, user["id"], params))
     return {"ok": True}
+
+
+@app.post("/api/stop")
+async def stop(request: Request):
+    user = await current_user(request)
+    if guard := require_login(user):
+        return guard
+    rt = await get_runtime(request.app, user["id"])
+    if not rt.running or not rt.task:
+        return JSONResponse({"error": "Nothing is running."}, status_code=409)
+    rt.task.cancel()
+    return {"ok": True}
+
+
+@app.get("/api/droptime")
+async def droptime(request: Request, name: str = ""):
+    """Best-effort NameMC drop-window lookup. Returns ISO start/end (UTC)."""
+    user = await current_user(request)
+    if guard := require_login(user):
+        return guard
+    try:
+        return await fetch_drop_window(name.strip())
+    except DropLookupError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=502)
 
 
 @app.get("/api/events")

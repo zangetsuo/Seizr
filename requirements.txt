@@ -5,3 +5,4 @@ uvicorn[standard]
 argon2-cffi
 aiosqlite
 cryptography
+playwright  # NameMC drop-window lookup; run `python -m playwright install chromium`

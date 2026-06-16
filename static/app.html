@@ -63,6 +63,7 @@
       <div class="field">
         <label>Username</label>
         <input id="target" placeholder="DreamWasTaken" autocomplete="off" spellcheck="false">
+        <div class="resolved" id="dropHint"></div>
       </div>
       <div class="two">
         <div class="field">
@@ -97,7 +98,7 @@
         <div class="loader" id="runLoader" style="display:none; margin:14px auto 2px"></div>
       </div>
       <div class="actions">
-        <button class="btn-primary btn-full" id="startBtn" disabled>Seize the name</button>
+        <button class="btn-primary btn-full" id="startBtn" disabled>Snipe!</button>
       </div>
       <div style="padding:0 20px"><span id="resultPill"></span></div>
       <div class="log" id="log"></div>
@@ -131,6 +132,36 @@ function toUtcIso(localVal){
   return isNaN(d.getTime()) ? "" : d.toISOString();
 }
 function shortUtc(iso){ return iso ? "→ " + iso.slice(0, 19) + "Z UTC" : ""; }
+// UTC ISO string -> local "YYYY-MM-DDTHH:MM:SS" for a datetime-local input.
+function toLocalInput(iso){
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T` +
+         `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// Auto-fetch the NameMC drop window when the user types a name (debounced).
+let dropTimer = null, dropSeq = 0;
+$("target").addEventListener("input", () => {
+  const name = $("target").value.trim();
+  clearTimeout(dropTimer);
+  if (!/^[A-Za-z0-9_]{1,16}$/.test(name)){ $("dropHint").textContent = ""; return; }
+  $("dropHint").textContent = "⏳ checking NameMC for a drop window…";
+  const seq = ++dropSeq;
+  dropTimer = setTimeout(async () => {
+    let j;
+    try { j = await (await fetch("/api/droptime?name=" + encodeURIComponent(name))).json(); }
+    catch { if (seq === dropSeq) $("dropHint").textContent = "⚠ NameMC unreachable."; return; }
+    if (seq !== dropSeq) return;  // a newer keystroke superseded this lookup
+    if (j.error){ $("dropHint").textContent = "⚠ " + j.error; return; }
+    $("winStart").value = toLocalInput(j.start);
+    if (j.end) $("winEnd").value = toLocalInput(j.end);
+    $("winStart").dispatchEvent(new Event("input"));
+    $("winEnd").dispatchEvent(new Event("input"));
+    $("dropHint").textContent = "✓ Drop window filled from NameMC — verify before seizing.";
+  }, 700);
+});
 
 document.querySelectorAll(".field input").forEach(i => {
   i.addEventListener("focus", () => i.closest(".field").classList.add("focus"));
@@ -150,7 +181,7 @@ async function refreshStatus(){
     $("loginPill").innerHTML = pill("ok", "Connected · " + (L.profile || "no profile"));
     $("codebox").classList.remove("show");
     $("loginBtn").closest(".actions").style.display = "none";
-    $("startBtn").disabled = s.running;
+    setRunning(s.running);
   } else if (L.status === "pending"){
     $("loginPill").innerHTML = pill("wait", "Waiting for sign-in");
     $("codebox").classList.add("show");
@@ -168,7 +199,18 @@ async function refreshStatus(){
 $("loginBtn").onclick = async () => {
   $("loginBtn").disabled = true;
   $("loginPill").innerHTML = '<span class="pill wait"><span class="loader loader-sm"></span>Connecting…</span>';
-  try { await fetch("/api/login", {method:"POST"}); } catch {}
+  // Open the tab synchronously inside the click gesture so the popup blocker
+  // allows it; point it at the Microsoft page once we have the code.
+  const w = window.open("about:blank", "_blank");
+  try {
+    const r = await fetch("/api/login", {method:"POST"});
+    const j = await r.json();
+    if (j.status === "pending" && j.verification_uri && w){
+      w.location = j.verification_uri + "?otc=" + encodeURIComponent(j.user_code);
+    } else if (w){
+      w.close();  // already signed in (silent refresh) — no page needed
+    }
+  } catch { if (w) w.close(); }
   refreshStatus();
 };
 
@@ -183,7 +225,16 @@ $("nameMcBtn").onclick = () => {
   window.open("https://namemc.com/search?q=" + encodeURIComponent(n), "_blank");
 };
 
-$("startBtn").onclick = async () => {
+// Flip the primary button between "Seize" and "Stop" depending on run state.
+function setRunning(on){
+  const b = $("startBtn");
+  b.disabled = false;
+  b.classList.toggle("btn-stop", on);
+  b.textContent = on ? "Stop" : "Snipe!";
+  b.dataset.mode = on ? "stop" : "start";
+}
+
+async function startSnipe(){
   const body = {
     target: $("target").value.trim(),
     window_start: toUtcIso($("winStart").value),
@@ -199,10 +250,22 @@ $("startBtn").onclick = async () => {
   catch { toast("Server unreachable.", "err"); return; }
   if (!r.ok){ toast((await r.json()).error, "err"); return; }
   toast("Seizr is on watch.", "ok");
-  $("startBtn").disabled = true;
+  setRunning(true);
   $("count").style.display = "none";
   $("runLoader").style.display = "block";
-};
+}
+
+async function stopSnipe(){
+  $("startBtn").disabled = true;
+  try {
+    const r = await fetch("/api/stop", {method:"POST"});
+    if (!r.ok){ toast((await r.json()).error, "err"); setRunning(true); return; }
+  } catch { toast("Server unreachable.", "err"); setRunning(true); return; }
+  // UI resets when the "done" (stopped) event arrives over SSE.
+}
+
+$("startBtn").onclick = () =>
+  $("startBtn").dataset.mode === "stop" ? stopSnipe() : startSnipe();
 
 const es = new EventSource("/api/events");
 es.onopen = () => $("sse").classList.add("live");
@@ -221,10 +284,13 @@ es.onmessage = (e) => {
     $("count").style.display = "";
     $("count").classList.add("idle");
     $("count").textContent = "--:--:--";
-    $("startBtn").disabled = false;
+    setRunning(false);
     if (ev.claimed){
       $("resultPill").innerHTML = pill("ok", "Claimed · " + ev.name);
       toast("Seized! The name is yours: " + ev.name, "ok");
+    } else if (ev.stopped){
+      $("resultPill").innerHTML = pill("bad", "Stopped");
+      toast("Stopped.", "ok");
     } else {
       $("resultPill").innerHTML = pill("bad", "Not claimed" + (ev.error ? " · " + ev.error : ""));
       toast("Not claimed" + (ev.error ? " · " + ev.error : ""), "err");
