@@ -52,6 +52,13 @@ class NameSniper:
         bearer = await self.auth.get_bearer()
         return {"Authorization": f"Bearer {bearer}"}
 
+    async def _claim_headers(self) -> dict:
+        # The name-change PUT rejects requests with no Content-Type (HTTP 415),
+        # so send application/json even though the body is empty.
+        headers = await self._headers()
+        headers["Content-Type"] = "application/json"
+        return headers
+
     # ----- cooldown guard --------------------------------------------------
 
     async def check_no_cooldown(self) -> bool:
@@ -95,7 +102,7 @@ class NameSniper:
         """One PUT. Returns True on a 200 (claimed)."""
         url = CLAIM_URL.format(name=self.target)
         try:
-            async with self.session.put(url, headers=await self._headers()) as resp:
+            async with self.session.put(url, headers=await self._claim_headers()) as resp:
                 code = resp.status
                 if code == 200:
                     self._log(f"req#{n}: HTTP 200 — CLAIMED")
@@ -104,6 +111,8 @@ class NameSniper:
                     self._log(f"req#{n}: HTTP 429 rate limited")
                 elif code == 403:
                     self._log(f"req#{n}: HTTP 403 (not available / cooldown)")
+                elif code == 415:
+                    self._log(f"req#{n}: HTTP 415 (bad content-type)")
                 else:
                     self._log(f"req#{n}: HTTP {code}")
         except aiohttp.ClientError as exc:

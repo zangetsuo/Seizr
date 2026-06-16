@@ -177,6 +177,12 @@ class Database:
         )
         await self.conn.commit()
 
+    async def clear_mc(self, user_id: int) -> None:
+        """Forget a user's connected Minecraft account (token + profile)."""
+        await self.conn.execute(
+            "DELETE FROM minecraft_accounts WHERE user_id = ?", (user_id,))
+        await self.conn.commit()
+
     async def get_mc(self, user_id: int) -> Optional[aiosqlite.Row]:
         cur = await self.conn.execute(
             "SELECT * FROM minecraft_accounts WHERE user_id = ?", (user_id,))

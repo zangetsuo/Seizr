@@ -24,17 +24,28 @@ _WINDOW_RE = re.compile(
     r"(?:.*?<time[^>]*datetime=\"([^\"]+)\")?",
     re.IGNORECASE | re.DOTALL,
 )
+# NameMC's <meta name="description" content="Status: <X>, Searches: ...">
+_STATUS_RE = re.compile(r"name=\"description\" content=\"Status:\s*([^,\"]+)", re.IGNORECASE)
 _NAME_OK = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 
 
 class DropLookupError(Exception):
-    """Lookup failed (bad name, Cloudflare block, no window, etc.)."""
+    """Lookup failed (bad name, Cloudflare block, not dropping, etc.)."""
 
 
-async def fetch_drop_window(name: str) -> dict:
-    """Return {"start": iso, "end": iso|None} for `name`, or raise.
+async def fetch_drop_info(name: str) -> dict:
+    """Look up a name's snipe-ability on NameMC.
 
-    Imports Playwright lazily so the rest of the app runs without it installed.
+    Returns {"status", "available", "start", "end"}:
+      - status:    NameMC's status string ("Available", "Possibly Available",
+                   "Locked", "Unavailable", ...).
+      - available: True if claimable right now (status contains "Available" —
+                   covers both "Available" and "Possibly Available").
+      - start/end: the Drop Window ISO times (UTC), or None if no window listed.
+
+    Raises DropLookupError only when the name is *not* snipeable (taken / locked
+    with no upcoming window) or the lookup itself failed. Imports Playwright
+    lazily so the rest of the app runs without it installed.
     """
     if not _NAME_OK.match(name or ""):
         raise DropLookupError("Invalid Minecraft name.")
@@ -47,13 +58,23 @@ async def fetch_drop_window(name: str) -> dict:
         ) from exc
 
     html = await _load_page(async_playwright, _NAME_URL.format(name=name))
-    m = _WINDOW_RE.search(html)
-    if not m:
-        # Distinguish "page loaded but no window" from a Cloudflare block.
-        if "Just a moment" in html or len(html) < 2000:
-            raise DropLookupError("Blocked by Cloudflare — try again shortly.")
-        raise DropLookupError("No drop window listed for this name.")
-    return {"start": m.group(1), "end": m.group(2)}
+    if "Just a moment" in html or len(html) < 2000:
+        raise DropLookupError("Blocked by Cloudflare — try again shortly.")
+
+    sm = _STATUS_RE.search(html)
+    status = sm.group(1).strip() if sm else "Unknown"
+    # Exact match — "Unavailable" contains "available" as a substring.
+    available = status.lower() in ("available", "possibly available")
+
+    wm = _WINDOW_RE.search(html)
+    start = wm.group(1) if wm else None
+    end = wm.group(2) if wm else None
+
+    # Snipeable if it's free now or has an upcoming/active drop window.
+    if not available and not start:
+        raise DropLookupError(f"'{name}' is not dropping (status: {status}).")
+
+    return {"status": status, "available": available, "start": start, "end": end}
 
 
 async def _load_page(async_playwright, url: str) -> str:

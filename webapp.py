@@ -34,7 +34,7 @@ from accounts import AccountError
 from api import NameSniper
 from auth import AuthError, MinecraftAuth
 from db import Database
-from namemc import DropLookupError, fetch_drop_window
+from namemc import DropLookupError, fetch_drop_info
 from mailer import send_verification
 from sniper import (
     DEFAULT_WINDOW_MINUTES,
@@ -411,9 +411,30 @@ async def droptime(request: Request, name: str = ""):
     if guard := require_login(user):
         return guard
     try:
-        return await fetch_drop_window(name.strip())
+        return await fetch_drop_info(name.strip())
     except DropLookupError as exc:
         return JSONResponse({"error": str(exc)}, status_code=502)
+
+
+@app.post("/api/mc-logout")
+async def mc_logout(request: Request):
+    """Disconnect the Minecraft/Microsoft account so a different one can sign in.
+
+    Wipes the stored refresh token and resets login state; the app account
+    (this Seizr profile) stays signed in.
+    """
+    user = await current_user(request)
+    if guard := require_login(user):
+        return guard
+    rt = await get_runtime(request.app, user["id"])
+    if rt.running:
+        return JSONResponse({"error": "Stop the running snipe first."}, status_code=409)
+    await request.app.state.db.clear_mc(user["id"])
+    rt.auth.refresh_token = None
+    rt.auth.bearer_token = None
+    rt.auth.bearer_expires_at = 0.0
+    rt.login = {"status": "idle"}
+    return {"ok": True}
 
 
 @app.get("/api/events")

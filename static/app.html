@@ -51,6 +51,7 @@
       </div>
       <div class="actions">
         <button class="btn-primary btn-full" id="loginBtn">Connect your account</button>
+        <button class="btn-tinted btn-full" id="mcLogoutBtn" style="display:none">Disconnect account</button>
       </div>
     </div>
     <div class="note">Sign in once so Seizr can claim the name on your behalf. No password ever leaves Microsoft.</div>
@@ -155,11 +156,25 @@ $("target").addEventListener("input", () => {
     catch { if (seq === dropSeq) $("dropHint").textContent = "⚠ NameMC unreachable."; return; }
     if (seq !== dropSeq) return;  // a newer keystroke superseded this lookup
     if (j.error){ $("dropHint").textContent = "⚠ " + j.error; return; }
-    $("winStart").value = toLocalInput(j.start);
-    if (j.end) $("winEnd").value = toLocalInput(j.end);
+    const nowMs = Date.now();
+    if (j.start){
+      // Drop window listed. If it already started (dropping now), clamp the
+      // start to now so we begin watching immediately.
+      const startMs = Date.parse(j.start);
+      $("winStart").value = startMs < nowMs
+        ? toLocalInput(new Date(nowMs).toISOString()) : toLocalInput(j.start);
+      if (j.end) $("winEnd").value = toLocalInput(j.end);
+      $("dropHint").textContent = (j.available || startMs < nowMs)
+        ? "✓ Dropping now — window filled. Verify, then Snipe!"
+        : "✓ Drop window filled from NameMC (" + j.status + ") — verify before seizing.";
+    } else if (j.available){
+      // Free right now, no window — snipe immediately for a few minutes.
+      $("winStart").value = toLocalInput(new Date(nowMs).toISOString());
+      $("winEnd").value = toLocalInput(new Date(nowMs + 5*60000).toISOString());
+      $("dropHint").textContent = "✓ Available now — Snipe! to claim it immediately.";
+    }
     $("winStart").dispatchEvent(new Event("input"));
     $("winEnd").dispatchEvent(new Event("input"));
-    $("dropHint").textContent = "✓ Drop window filled from NameMC — verify before seizing.";
   }, 700);
 });
 
@@ -180,7 +195,8 @@ async function refreshStatus(){
   if (L.status === "done"){
     $("loginPill").innerHTML = pill("ok", "Connected · " + (L.profile || "no profile"));
     $("codebox").classList.remove("show");
-    $("loginBtn").closest(".actions").style.display = "none";
+    $("loginBtn").style.display = "none";
+    $("mcLogoutBtn").style.display = "";
     setRunning(s.running);
   } else if (L.status === "pending"){
     $("loginPill").innerHTML = pill("wait", "Waiting for sign-in");
@@ -212,6 +228,22 @@ $("loginBtn").onclick = async () => {
     }
   } catch { if (w) w.close(); }
   refreshStatus();
+};
+
+$("mcLogoutBtn").onclick = async () => {
+  $("mcLogoutBtn").disabled = true;
+  let r;
+  try { r = await fetch("/api/mc-logout", {method:"POST"}); }
+  catch { toast("Server unreachable.", "err"); $("mcLogoutBtn").disabled = false; return; }
+  if (!r.ok){ toast((await r.json()).error, "err"); $("mcLogoutBtn").disabled = false; return; }
+  // Back to disconnected: restore the Connect button, hide Disconnect.
+  $("mcLogoutBtn").style.display = "none";
+  $("mcLogoutBtn").disabled = false;
+  $("loginBtn").style.display = "";
+  $("loginBtn").disabled = false;
+  $("loginPill").innerHTML = '<span class="pill idle"><span class="dot"></span>Not connected</span>';
+  $("startBtn").disabled = true;
+  toast("Microsoft account disconnected.", "ok");
 };
 
 $("copyCode").onclick = () => {
