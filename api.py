@@ -162,11 +162,13 @@ class NameSniper:
         self._log(f"window open — polling '{self.target}' every {poll_interval_ms}ms "
                   f"until window close")
 
+        checks = 0
         while not self._stop.is_set() and self.now() < window_end:
             status = await self.is_available()
+            checks += 1
 
             if status == "AVAILABLE":
-                self._log(f"'{self.target}' AVAILABLE — firing bursts")
+                self._log(f"check #{checks}: '{self.target}' AVAILABLE — firing bursts")
                 for _ in range(self.AGGRESSIVE_ROUNDS):
                     if await self._burst():
                         self.claimed = True
@@ -177,8 +179,12 @@ class NameSniper:
                 interval = base
             elif status == "RATELIMIT":
                 interval = min(interval * 2, self.MAX_BACKOFF_S)
-                self._log(f"availability: 429 rate limited — backing off to {interval:.1f}s")
-            else:  # TAKEN / ERROR — limit (if any) has cleared
+                self._log(f"check #{checks}: 429 rate limited — backing off to {interval:.1f}s")
+            elif status == "TAKEN":
+                self._log(f"check #{checks}: '{self.target}' still taken")
+                interval = base
+            else:  # ERROR
+                self._log(f"check #{checks}: availability check error")
                 interval = base
 
             await asyncio.sleep(interval)
