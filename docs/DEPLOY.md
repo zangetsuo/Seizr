@@ -14,26 +14,73 @@ cache on cold start (you re-login), so a VM is preferred for a personal sniper.
 
 ## Option A — Oracle Cloud Always Free (recommended)
 
-Always Free gives you an Ampere ARM VM (up to 4 vCPU / 24 GB) that never expires.
+> **Latency is the whole game.** A name drop is a race won on round-trip time to
+> Mojang's API. `api.minecraftservices.com` is served by **Azure Front Door**
+> (Microsoft's anycast edge), so you want a VM in a major US-East peering metro —
+> **Ashburn, Virginia**. From a home machine the API is ~350 ms away; from
+> Ashburn you should see well under 50 ms.
 
-1. Create an **Always Free** VM instance (Ubuntu 22.04, ARM/Ampere shape).
-2. Open port 8000 only to your IP (VCN security list / `iptables`), or skip this
-   and use the SSH tunnel below instead (safer).
-3. On the VM:
+### ⚠️ The one permanent decision: home region
+
+Oracle locks all **Always Free** resources to the **home region you pick at
+signup — and you can never change it.** Choose **`US East (Ashburn)`**
+(`us-ashburn-1`). Pick the wrong region and you're stuck with worse latency
+forever. This single choice matters more than any code tuning.
+
+### Shape: use the AMD micro, not the ARM Ampere
+
+- **Pick `VM.Standard.E2.1.Micro`** (AMD, 1/8 OCPU, 1 GB). Sniping is
+  network-bound, not CPU-bound — this is plenty.
+- **Avoid the ARM Ampere A1** shape: it's usually *"out of capacity"* in Ashburn,
+  and Oracle **reclaims idle Always-Free A1 instances** — bad for a box that sits
+  quiet between drops and must be up at the exact moment.
+- OS: **Ubuntu 22.04**.
+
+### Steps
+
+1. Create the instance (Ubuntu 22.04, `E2.1.Micro`) in your Ashburn home region.
+2. **Verify latency first** — SSH in and run:
+   ```bash
+   curl -s -o /dev/null -w "tls=%{time_appconnect}s ttfb=%{time_starttransfer}s\n" \
+     https://api.minecraftservices.com/minecraft/profile/name/Notch/available
+   ```
+   Expect `ttfb` well under ~0.05 s. If it's high, the region is wrong.
+3. Build and run (Docker; the image is core-only — no Chromium):
    ```bash
    sudo apt update && sudo apt install -y docker.io git
    git clone <your-repo> seizr && cd seizr
    sudo docker build -t seizr .
    sudo docker run -d --name seizr --restart unless-stopped \
-     -p 127.0.0.1:8000:8000 -v seizr-data:/data seizr
+     -p 127.0.0.1:8000:8000 -v seizr-data:/data \
+     -e SEIZR_SECRET_KEY="$(openssl rand -base64 48)" \
+     seizr
    ```
-   `-p 127.0.0.1:8000:8000` keeps it private. The `seizr-data` volume persists
-   the login token across restarts.
-4. Reach it from your laptop over SSH tunnel:
+   - `-p 127.0.0.1:8000:8000` keeps it private (reach it via the tunnel below).
+   - `-v seizr-data:/data` persists the SQLite DB + login token across restarts.
+   - **`SEIZR_SECRET_KEY` encrypts stored Minecraft tokens.** Set it once and keep
+     it stable — if it changes, every saved login is invalidated and you re-auth.
+     Save the generated value (e.g. in an `.env`) so a rebuild reuses it.
+4. Reach the UI from your laptop over an SSH tunnel:
    ```bash
    ssh -L 8000:localhost:8000 ubuntu@<vm-ip>
    # then open http://localhost:8000
    ```
+
+### The drop window: enter it manually
+
+The NameMC autofill is **not** installed on the VM — NameMC's Cloudflare blocks
+datacenter IPs, and a drop window is a **static value** anyway. So:
+
+1. On your **home machine**, run Seizr locally and type the name — the window
+   autofills (or read it off NameMC directly).
+2. Copy the two timestamps and **enter them by hand** in the VM's UI (Window
+   opens / Window closes). Done once per name.
+
+### Keep it alive
+
+Oracle may reclaim idle Always-Free compute. The `--restart unless-stopped`
+container keeps Seizr running, which is enough activity. Don't stop the container
+between drops.
 
 ## Option B — GCP e2-micro free tier
 

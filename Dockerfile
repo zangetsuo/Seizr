@@ -2,14 +2,20 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Core deps only — the optional NameMC autofill (Playwright/Chromium) is not
+# installed: it can't run from a datacenter IP anyway. Look windows up at home.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY auth.py api.py sniper.py webapp.py config.json ./
+# All application modules (webapp imports accounts/api/auth/db/mailer/namemc/sniper,
+# and db imports crypto).
+COPY *.py config.json ./
 COPY static ./static
 
-# Persist the auth token cache outside the image via a mounted volume.
+# Persist the SQLite DB + auth token cache on a mounted volume so logins survive
+# restarts.
 VOLUME ["/data"]
+ENV SEIZR_DB=/data/seizr.db
 ENV AUTH_CACHE=/data/.auth_cache.json
 
 EXPOSE 8000

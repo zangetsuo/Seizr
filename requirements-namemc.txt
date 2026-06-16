@@ -1,0 +1,8 @@
+# Optional: NameMC drop-window autofill (the "type a name, window fills" feature).
+# Only works from a residential IP — NameMC's Cloudflare 403s datacenter IPs, so
+# do NOT install this on a cloud VM. Run it on your home machine, look the window
+# up once (it's a static value), then enter it manually on the server.
+#
+#   pip install -r requirements-namemc.txt
+#   python -m playwright install chromium
+playwright
