@@ -267,16 +267,20 @@ class MinecraftAuth:
         Fast path is lock-free; the locked slow path re-checks so concurrent
         callers (poll loop + burst) never run duplicate refresh chains.
         """
-        if self._bearer_fresh():
-            return self.bearer_token
+        token = self.bearer_token
+        if token and self._bearer_fresh():
+            return token
         async with self._lock:
-            if self._bearer_fresh():
-                return self.bearer_token
+            token = self.bearer_token
+            if token and self._bearer_fresh():
+                return token
             if self.bearer_token or self.refresh_token:
                 print("Bearer near expiry; refreshing...")
                 await self._run_chain(use_refresh=True)
             else:
                 await self._login_locked()
+        if self.bearer_token is None:
+            raise AuthError("auth chain completed without a bearer token")
         return self.bearer_token
 
     async def get_profile(self) -> Optional[dict]:
