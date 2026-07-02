@@ -7,22 +7,26 @@ and quick start, see the [README](../README.md).
 
 | File | Role |
 |------|------|
-| `auth.py` | Microsoft → Xbox Live → XSTS → Minecraft auth chain + refresh-token cache |
-| `api.py` | Availability polling, adaptive 429 backoff, the concurrent claim burst |
-| `sniper.py` | CLI entry point: NTP sync, window resolution, orchestration |
-| `webapp.py` | FastAPI server (REST + Server-Sent Events) serving the web UI |
+| `seizr/auth.py` | Microsoft → Xbox Live → XSTS → Minecraft auth chain + refresh-token cache |
+| `seizr/mojang.py` | Availability polling, adaptive 429 backoff, the concurrent claim burst |
+| `seizr/clock.py` | NTP-corrected clock + drop-window time parsing |
+| `seizr/cli.py` | CLI orchestration: config, NTP sync, window resolution (`sniper.py` shim) |
+| `seizr/db.py`, `seizr/crypto.py` | SQLite layer + at-rest encryption of refresh tokens |
+| `seizr/accounts.py`, `seizr/mailer.py` | Seizr accounts (argon2, sessions, Google OAuth) + verification email |
+| `seizr/runtime.py` | Per-user web runtime: SSE event bus + snipe job runner |
+| `seizr/web/` | FastAPI app split into routers (`webapp.py` shim keeps `uvicorn webapp:app`) |
 | `static/` | Frontend — `landing.html`, `app.html`, shared `style.css`, `favicon.svg` |
 | `config.json` | User-editable settings (used by the CLI) |
 | `Dockerfile`, `DEPLOY.md` | Container + free-tier cloud deployment |
 
-### Auth chain (`auth.py`)
+### Auth chain (`seizr/auth.py`)
 
 OAuth2 **device-code flow** (no password) → Xbox Live → XSTS → Minecraft bearer
 token. The Microsoft *refresh token* is cached (`.auth_cache.json`, `chmod 600`,
 or the `AUTH_CACHE` path on a server volume) so re-runs skip the browser step. The
 bearer token auto-refreshes before expiry during long waits.
 
-### Sniping model (`api.py`)
+### Sniping model (`seizr/mojang.py`)
 
 Mojang no longer drops names at an exact instant — a name frees up somewhere
 inside a **window**. `snipe_window(start, end, poll_ms)`:
@@ -62,7 +66,7 @@ Edit `config.json`, then:
 Test the auth chain in isolation:
 
 ```bash
-.venv/bin/python auth.py
+.venv/bin/python -m seizr.auth
 ```
 
 ## Configuration (`config.json`)

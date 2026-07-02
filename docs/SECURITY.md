@@ -8,16 +8,16 @@ backing every claim here is in this repository — audit it.
 
 - **It never sees your password.** Sign-in uses Microsoft's **OAuth2 device-code
   flow**: you authenticate in your own browser on `microsoft.com`, and Microsoft
-  hands Seizr a token. Your password never reaches this app. → see `auth.py`.
+  hands Seizr a token. Your password never reaches this app. → see `seizr/auth.py`.
 - **The Microsoft refresh token is stored encrypted.** After login, Seizr keeps
   your Microsoft *refresh token* so re-runs skip the browser step. Account
   passwords are hashed with **argon2**; Minecraft refresh tokens are **encrypted
   at rest** (Fernet/AES) with a key derived from `SEIZR_SECRET_KEY`. No plaintext
   passwords or tokens are stored.
-  - Multi-user web server: per-user, in the `minecraft_accounts` table. → `db.py`, `crypto.py`
-  - CLI / single-user: local `.auth_cache.json`, `chmod 600` (or `AUTH_CACHE` volume). → `auth.py`
+  - Multi-user web server: per-user, in the `minecraft_accounts` table. → `seizr/db.py`, `seizr/crypto.py`
+  - CLI / single-user: local `.auth_cache.json`, `chmod 600` (or `AUTH_CACHE` volume). → `seizr/auth.py`
 - **It acts only on your own profile.** The only write Seizr makes is the name
-  claim `PUT` on the account you signed into. → see `api.py`.
+  claim `PUT` on the account you signed into. → see `seizr/mojang.py`.
 - **It talks to two hosts only:** `login.microsoftonline.com` (auth) and
   `api.minecraftservices.com` (Xbox/XSTS/Minecraft + the claim). No analytics, no
   third-party calls, no telemetry.
@@ -41,6 +41,6 @@ fix before public disclosure.
 
 ## Scope
 
-In scope: the auth chain, token storage, the web server (`webapp.py`), and the
+In scope: the auth chain, token storage, the web server (`seizr/web/`), and the
 deployment guidance. Out of scope: Mojang/Microsoft's own APIs, and anything you
 change in a fork.

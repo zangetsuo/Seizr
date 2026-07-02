@@ -15,9 +15,9 @@ from typing import Optional
 
 import aiosqlite
 
-import crypto
+from seizr import ROOT_DIR, crypto
 
-DB_PATH = Path(os.environ.get("SEIZR_DB", Path(__file__).with_name("seizr.db")))
+DB_PATH = Path(os.environ.get("SEIZR_DB", ROOT_DIR / "seizr.db"))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -63,8 +63,12 @@ class Database:
         conn = await aiosqlite.connect(path)
         conn.row_factory = aiosqlite.Row
         await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA synchronous=NORMAL")  # safe with WAL, much faster writes
         await conn.execute("PRAGMA foreign_keys=ON")
         await conn.executescript(SCHEMA)
+        now = time.time()
+        await conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+        await conn.execute("DELETE FROM email_tokens WHERE expires_at < ?", (now,))
         await conn.commit()
         return cls(conn)
 
@@ -137,7 +141,7 @@ class Database:
     # ----- email tokens ----------------------------------------------------
 
     async def create_email_token(self, token: str, user_id: int, purpose: str,
-                                  ttl_seconds: int) -> None:
+                                 ttl_seconds: int) -> None:
         now = time.time()
         await self.conn.execute(
             """INSERT INTO email_tokens (token, user_id, purpose, created_at, expires_at)
@@ -145,6 +149,21 @@ class Database:
             (token, user_id, purpose, now, now + ttl_seconds),
         )
         await self.conn.commit()
+
+    async def consume_email_token(self, token: str, purpose: str) -> Optional[int]:
+        """Return user_id and delete the token if valid+unexpired, else None."""
+        cur = await self.conn.execute(
+            "SELECT user_id, expires_at FROM email_tokens WHERE token = ? AND purpose = ?",
+            (token, purpose),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        await self.conn.execute("DELETE FROM email_tokens WHERE token = ?", (token,))
+        await self.conn.commit()
+        if row["expires_at"] < time.time():
+            return None
+        return row["user_id"]
 
     # ----- minecraft accounts (per-user MS token) --------------------------
 
@@ -187,18 +206,3 @@ class Database:
         cur = await self.conn.execute(
             "SELECT * FROM minecraft_accounts WHERE user_id = ?", (user_id,))
         return await cur.fetchone()
-
-    async def consume_email_token(self, token: str, purpose: str) -> Optional[int]:
-        """Return user_id and delete the token if valid+unexpired, else None."""
-        cur = await self.conn.execute(
-            "SELECT user_id, expires_at FROM email_tokens WHERE token = ? AND purpose = ?",
-            (token, purpose),
-        )
-        row = await cur.fetchone()
-        if not row:
-            return None
-        await self.conn.execute("DELETE FROM email_tokens WHERE token = ?", (token,))
-        await self.conn.commit()
-        if row["expires_at"] < time.time():
-            return None
-        return row["user_id"]

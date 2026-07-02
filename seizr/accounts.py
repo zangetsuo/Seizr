@@ -6,12 +6,13 @@ import os
 import re
 import secrets
 from typing import Optional
+from urllib.parse import urlencode
 
 import aiohttp
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
-from db import Database
+from seizr.db import Database
 
 _ph = PasswordHasher()
 
@@ -93,7 +94,6 @@ def google_enabled() -> bool:
 
 
 def google_auth_url(redirect_uri: str, state: str) -> str:
-    from urllib.parse import urlencode
     params = {
         "client_id": GOOGLE_CLIENT_ID,
         "redirect_uri": redirect_uri,

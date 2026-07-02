@@ -1,12 +1,12 @@
 """Microsoft -> Xbox Live -> XSTS -> Minecraft authentication chain.
 
 Implements the full device-code OAuth2 flow (no password, browser based),
-caches the refresh token to disk so re-runs skip the login step, and exposes
-a bearer token that auto-refreshes before expiry during long waits.
+caches the refresh token (file for CLI, callback for the multi-user web
+server), and exposes a bearer token that auto-refreshes before expiry.
 
 Run standalone to test the chain end to end:
 
-    python auth.py
+    python -m seizr.auth
 """
 
 import asyncio
@@ -14,9 +14,11 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 import aiohttp
+
+from seizr import ROOT_DIR
 
 # Public MSA app client id (PrismLauncher's) — device-code flow enabled and
 # pre-consented for the XboxLive.signin scope. Override in config.json via
@@ -32,8 +34,8 @@ MC_PROFILE_URL = "https://api.minecraftservices.com/minecraft/profile"
 
 SCOPE = "XboxLive.signin offline_access"
 # Honor AUTH_CACHE (set in container/cloud to a mounted volume) so the refresh
-# token survives restarts; default to a file next to this module locally.
-CACHE_FILE = Path(os.environ.get("AUTH_CACHE", Path(__file__).with_name(".auth_cache.json")))
+# token survives restarts; default to a file in the repo root locally.
+CACHE_FILE = Path(os.environ.get("AUTH_CACHE", ROOT_DIR / ".auth_cache.json"))
 
 # Refresh the Minecraft bearer this many seconds before it actually expires.
 REFRESH_MARGIN = 60
@@ -52,7 +54,7 @@ class MinecraftAuth:
         client_id: str = DEFAULT_CLIENT_ID,
         cache_file: Path = CACHE_FILE,
         refresh_token: Optional[str] = None,
-        on_refresh=None,
+        on_refresh: Optional[Callable[[str], Awaitable[None]]] = None,
     ):
         """`on_refresh(token)` (async) makes this a per-user instance: the token
         is injected and saved via the callback instead of the local file cache
@@ -92,13 +94,19 @@ class MinecraftAuth:
         elif self._on_refresh and self.refresh_token:
             await self._on_refresh(self.refresh_token)
 
+    def forget(self) -> None:
+        """Drop all tokens (used when a user disconnects their MS account)."""
+        self.refresh_token = None
+        self.bearer_token = None
+        self.bearer_expires_at = 0.0
+
     # ----- Microsoft OAuth2 ------------------------------------------------
 
     async def begin_device_code(self) -> dict:
         """Request a device code. Returns the dict with user_code/verification_uri.
 
-        Stores the pending request so poll_device_token() can complete it. Used by
-        both the CLI flow and the web UI (which needs the code before polling).
+        Used by both the CLI flow and the web UI (which shows the code to the
+        user and then calls poll_device_token() in the background).
         """
         async with self.session.post(
             DEVICE_CODE_URL,
@@ -210,14 +218,25 @@ class MinecraftAuth:
     async def login(self) -> None:
         """Ensure we have a valid bearer token, using cache when possible."""
         async with self._lock:
-            self._load_cache()
-            if self.refresh_token:
-                try:
-                    await self._run_chain(use_refresh=True)
-                    return
-                except AuthError as exc:
-                    print(f"Cached login failed ({exc}); falling back to device code.")
-            await self._run_chain(use_refresh=False)
+            await self._login_locked()
+
+    async def _login_locked(self) -> None:
+        """Full login: cached refresh token first, device code as fallback.
+        Caller must hold self._lock."""
+        self._load_cache()
+        if self.refresh_token:
+            try:
+                await self._run_chain(use_refresh=True)
+                return
+            except AuthError as exc:
+                print(f"Cached login failed ({exc}); falling back to device code.")
+        await self._run_chain(use_refresh=False)
+
+    async def refresh_login(self) -> None:
+        """Silent re-auth from the stored refresh token. Raises AuthError if
+        the token is missing/rejected — no device-code fallback."""
+        async with self._lock:
+            await self._run_chain(use_refresh=True)
 
     async def _run_chain(self, use_refresh: bool) -> None:
         if use_refresh:
@@ -239,14 +258,25 @@ class MinecraftAuth:
         self.bearer_expires_at = time.time() + mc.get("expires_in", 86400)
         print("Minecraft bearer token acquired.")
 
+    def _bearer_fresh(self) -> bool:
+        return bool(self.bearer_token) and time.time() < self.bearer_expires_at - REFRESH_MARGIN
+
     async def get_bearer(self) -> str:
-        """Return a valid bearer, refreshing it if near expiry."""
-        if not self.bearer_token:
-            await self.login()
-        elif time.time() >= self.bearer_expires_at - REFRESH_MARGIN:
-            print("Bearer near expiry; refreshing...")
-            async with self._lock:
+        """Return a valid bearer, refreshing it if near expiry.
+
+        Fast path is lock-free; the locked slow path re-checks so concurrent
+        callers (poll loop + burst) never run duplicate refresh chains.
+        """
+        if self._bearer_fresh():
+            return self.bearer_token
+        async with self._lock:
+            if self._bearer_fresh():
+                return self.bearer_token
+            if self.bearer_token or self.refresh_token:
+                print("Bearer near expiry; refreshing...")
                 await self._run_chain(use_refresh=True)
+            else:
+                await self._login_locked()
         return self.bearer_token
 
     async def get_profile(self) -> Optional[dict]:

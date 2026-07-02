@@ -1,19 +1,19 @@
-"""Availability polling and the name-claim burst.
+"""Availability polling and the name-claim burst — the timing-critical path.
 
-All network calls share the aiohttp session from sniper.py and the bearer token
-from auth.py. Timestamps in logs come from the NTP-corrected clock so they line
-up with the real drop time, not the (possibly skewed) system clock.
+All network calls share one aiohttp session (warm TLS connections) and the
+bearer token from auth.py. Timestamps in logs come from the NTP-corrected
+clock so they line up with the real drop time, not the system clock.
 """
 
 import asyncio
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
-LogFn = Callable[[str], None]
-
 import aiohttp
 
-from auth import MinecraftAuth
+from seizr.auth import MinecraftAuth
+
+LogFn = Callable[[str], None]
 
 AVAILABLE_URL = "https://api.minecraftservices.com/minecraft/profile/name/{name}/available"
 CLAIM_URL = "https://api.minecraftservices.com/minecraft/profile/name/{name}"
@@ -21,6 +21,14 @@ NAMECHANGE_URL = "https://api.minecraftservices.com/minecraft/profile/namechange
 
 
 class NameSniper:
+    # On an AVAILABLE flip, fire this many back-to-back burst rounds before
+    # falling back to polling (covers losing the first race / brief 429s).
+    AGGRESSIVE_ROUNDS = 6
+    # Adaptive poll backoff: double the interval on each 429, cap here, reset on
+    # any clean response. Keeps us under the limit so we stay responsive — and
+    # avoids the 429 flood that can temp-suspend the account.
+    MAX_BACKOFF_S = 10.0
+
     def __init__(
         self,
         session: aiohttp.ClientSession,
@@ -38,6 +46,8 @@ class NameSniper:
         self.log_fn = log_fn  # optional extra sink (e.g. web UI stream)
         self._stop = asyncio.Event()
         self.claimed = False
+        self.available_url = AVAILABLE_URL.format(name=target_name)
+        self.claim_url = CLAIM_URL.format(name=target_name)
 
     def _ts(self) -> str:
         return datetime.fromtimestamp(self.now(), tz=timezone.utc).strftime("%H:%M:%S.%f")[:-3]
@@ -82,9 +92,8 @@ class NameSniper:
 
         RATELIMIT is distinct so the poll loop can back off instead of hammering.
         """
-        url = AVAILABLE_URL.format(name=self.target)
         try:
-            async with self.session.get(url, headers=await self._headers()) as resp:
+            async with self.session.get(self.available_url, headers=await self._headers()) as resp:
                 if resp.status == 429:
                     return "RATELIMIT"
                 if resp.status != 200:
@@ -98,11 +107,10 @@ class NameSniper:
 
     # ----- claim burst -----------------------------------------------------
 
-    async def _single_claim(self, n: int) -> bool:
+    async def _single_claim(self, n: int, headers: dict) -> bool:
         """One PUT. Returns True on a 200 (claimed)."""
-        url = CLAIM_URL.format(name=self.target)
         try:
-            async with self.session.put(url, headers=await self._claim_headers()) as resp:
+            async with self.session.put(self.claim_url, headers=headers) as resp:
                 code = resp.status
                 if code == 200:
                     self._log(f"req#{n}: HTTP 200 — CLAIMED")
@@ -120,8 +128,14 @@ class NameSniper:
         return False
 
     async def _burst(self) -> bool:
-        """Fire `concurrent` PUTs at once. Stop on first 200."""
-        tasks = [asyncio.create_task(self._single_claim(i + 1)) for i in range(self.concurrent)]
+        """Fire `concurrent` PUTs at once. Stop on first 200.
+
+        The bearer is resolved once per burst so every PUT hits the wire
+        immediately instead of each awaiting its own auth check.
+        """
+        headers = await self._claim_headers()
+        tasks = [asyncio.create_task(self._single_claim(i + 1, headers))
+                 for i in range(self.concurrent)]
         won = False
         for fut in asyncio.as_completed(tasks):
             if await fut:
@@ -137,15 +151,8 @@ class NameSniper:
 
     # ----- window snipe ----------------------------------------------------
 
-    # On an AVAILABLE flip, fire this many back-to-back burst rounds before
-    # falling back to polling (covers losing the first race / brief 429s).
-    AGGRESSIVE_ROUNDS = 6
-    # Adaptive poll backoff: double the interval on each 429, cap here, reset on
-    # any clean response. Keeps us under the limit so we stay responsive — and
-    # avoids the 429 flood that can temp-suspend the account.
-    MAX_BACKOFF_S = 10.0
-
-    async def snipe_window(self, window_start: float, window_end: float, poll_interval_ms: int) -> bool:
+    async def snipe_window(self, window_start: float, window_end: float,
+                           poll_interval_ms: int) -> bool:
         """Poll the whole drop window; burst-claim on the first AVAILABLE flip.
 
         Names no longer drop at an exact instant — they free up somewhere inside

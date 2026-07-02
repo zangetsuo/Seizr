@@ -7,9 +7,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# All application modules (webapp imports accounts/api/auth/db/mailer/namemc/sniper,
-# and db imports crypto).
-COPY *.py config.json ./
+# The seizr package plus the two entry-point shims (webapp.py for uvicorn,
+# sniper.py for the CLI).
+COPY seizr ./seizr
+COPY webapp.py sniper.py config.json ./
 COPY static ./static
 
 # Persist the SQLite DB + auth token cache on a mounted volume so logins survive
