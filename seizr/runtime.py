@@ -89,8 +89,9 @@ async def run_snipe(session: aiohttp.ClientSession, db: Database,
         poll_ms = int(params.get("poll_ms", 1000))
         log(f"Drop window: {iso_utc(ws)} -> {iso_utc(we)}")
 
-        # countdown to the window opening; keep the bearer fresh during the wait
-        while clock.now() < ws:
+        # countdown to the window opening; keep the bearer fresh during the wait.
+        # Hands off 15 s early so the sniper can measure its latency lead.
+        while clock.now() < ws - 15:
             rem = ws - clock.now()
             bus.publish({"type": "countdown", "remaining": rem, "label": fmt_remaining(rem),
                          "phase": "opens"})

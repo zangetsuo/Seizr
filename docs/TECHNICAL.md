@@ -31,12 +31,21 @@ bearer token auto-refreshes before expiry during long waits.
 Mojang no longer drops names at an exact instant — a name frees up somewhere
 inside a **window**. `snipe_window(start, end, poll_ms)`:
 
-1. Waits for the window to open.
-2. Polls availability across the whole window.
-3. On the first `AVAILABLE` flip, fires up to `AGGRESSIVE_ROUNDS` (6) back-to-back
-   bursts of `concurrent_requests` simultaneous `PUT` claims, stopping on HTTP 200.
-4. Backs off on HTTP 429 (interval doubles, capped at 10 s) and recovers on the
-   next clean response — staying under the rate limit so it remains responsive.
+1. Waits for the window to open. ~15 s before it does, measures API round-trip
+   (min of 3 samples on the warm session) and starts probing one-way-trip early,
+   so the first request *arrives* as the window opens rather than departs then.
+2. **Short windows (≤ 2 min)** are probed *PUT-first*: every probe is itself a
+   claim (`200` = won, `403` = not free yet), so the first attempt after the
+   name frees wins with zero detection latency.
+3. **Long windows** poll availability with `GET` (cheap on the claim budget) and,
+   on the first `AVAILABLE` flip, fire up to `AGGRESSIVE_ROUNDS` (6) bursts of
+   `concurrent_requests` `PUT` claims — micro-staggered 15 ms apart, 250 ms
+   between rounds — stopping on HTTP 200.
+4. All requests (GET and PUT) draw from one shared token bucket (burst of 8,
+   then 3 req/s sustained), and polling backs off on HTTP 429 (interval doubles,
+   capped at 10 s), recovering on the next clean response — bounding total
+   request volume so the account never hits the 429 flood that risks a temp
+   claim-lock.
 
 ## Install
 

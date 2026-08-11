@@ -90,9 +90,11 @@ async def run() -> None:
 
         print(f"Drop window: {iso_utc(win_start)}  ->  {iso_utc(win_end)}")
 
-        # wait for the window to open, refreshing the bearer along the way
-        if clock.now() < win_start:
-            await countdown_to(clock, win_start, win_start, f"Waiting for window on '{target}'")
+        # wait for the window to open, refreshing the bearer along the way;
+        # hand off 15 s early so the sniper can measure latency lead
+        if clock.now() < win_start - 15:
+            await countdown_to(clock, win_start, win_start - 15,
+                               f"Waiting for window on '{target}'")
             await auth.get_bearer()
 
         claimed = await sniper.snipe_window(
